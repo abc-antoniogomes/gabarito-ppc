@@ -1,7 +1,7 @@
 """
 streamlit.py
 ------------
-Dashboard de Validação de Gabarito — ABC Atacado.
+Dashboard de Validação de Gabarito — MYSA.
 
 Lê:
     - gabarito.csv
@@ -30,7 +30,7 @@ from google.oauth2.service_account import Credentials
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Validação de Gabarito | ABC Atacado",
+    page_title="Validação de Gabarito | MYSA DEXCO",
     page_icon="✅",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -304,7 +304,7 @@ def carregar_gabarito(caminho: str) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(show_spinner="Carregando imagens MDM…")
+@st.cache_data(show_spinner="Carregando imagens ...")
 def carregar_imagens_mdm(caminho: str) -> tuple[dict, dict]:
     if not os.path.exists(caminho):
         return {}, {}
@@ -712,7 +712,7 @@ with st.form(key=f"form_ean_{ean_atual}_pag_{st.session_state['pagina_anuncios']
                     st.caption("—")
 
             with c2b:
-                st.markdown('<div class="section-header">Imagem (MDM)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="section-header">Imagem</div>', unsafe_allow_html=True)
                 if img_mdm and str(img_mdm).startswith("http"):
                     st.markdown(
                         f'''
