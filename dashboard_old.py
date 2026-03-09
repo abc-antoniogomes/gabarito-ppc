@@ -1,5 +1,5 @@
 """
-dashboard.py
+streamlit.py
 ------------
 Dashboard de Validação de Gabarito — MYSA.
 
@@ -159,7 +159,7 @@ def carregar_validacoes_sheet() -> pd.DataFrame:
     dfv["Revisado"] = dfv["Revisado"].apply(_to_sim_nao)
     dfv["Valido"] = dfv["Valido"].apply(_to_sim_nao)
 
-    return dfv
+    return dfv[cols_necessarias]
 
 
 def aplicar_validacoes_do_sheet(df_base: pd.DataFrame) -> pd.DataFrame:
@@ -221,8 +221,6 @@ def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame) -> int:
             "row_id": row_id,
             "Revisado": alt.get("Revisado", "Não"),
             "Valido": alt.get("Valido", "Não"),
-            "Nome_do_Anuncio": str(df_work.loc[idx_int, "Nome_do_Anuncio"]).strip() if "Nome_do_Anuncio" in df_work.columns else "",
-            "Vendedor": str(df_work.loc[idx_int, "Vendedor"]).strip() if "Vendedor" in df_work.columns else "",
             "updated_at": agora,
             "updated_by": usuario,
         }
@@ -238,10 +236,9 @@ def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame) -> int:
         else:
             df_exist = pd.concat([df_exist, pd.DataFrame([payload])], ignore_index=True)
 
-    # Mantém todas as colunas existentes e garante que as colunas base fiquem no início
-    cols_base = ["row_id", "Revisado", "Valido", "Nome_do_Anuncio", "Vendedor", "updated_at", "updated_by"]
-    outras_cols = [c for c in df_exist.columns if c not in cols_base]
-    df_exist = df_exist[cols_base + outras_cols].fillna("")
+    df_exist = df_exist[
+        ["row_id", "Revisado", "Valido", "updated_at", "updated_by"]
+    ].fillna("")
 
     ws.clear()
     ws.update([df_exist.columns.tolist()] + df_exist.values.tolist())
@@ -548,7 +545,7 @@ if st.session_state["ean_paginado"] != ean_atual:
 # ─────────────────────────────────────────────────────────────────────────────
 # EAN ATUAL — PAINEL SUPERIOR
 # ─────────────────────────────────────────────────────────────────────────────
-df_ean = df_candidates[df_candidates["EAN_LIMPO"] == ean_atual].copy()
+df_ean = df_work[df_work["EAN_LIMPO"] == ean_atual].copy()
 row0 = df_ean.iloc[0]
 
 mdm_nome = str(row0.get("MDM_Nome", "—")).strip() or "—"
