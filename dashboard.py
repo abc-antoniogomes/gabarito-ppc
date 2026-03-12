@@ -63,7 +63,7 @@ st.markdown(
 ARQUIVO_GABARITO = "gabarito.csv"
 ARQUIVO_SAIDA = "gabarito_validado.csv"
 ARQUIVO_IMAGENS_MDM = "imagens_mdm.csv"
-ITENS_POR_PAGINA = 25
+ITENS_POR_PAGINA = 100
 
 FAB_COL_CANDIDATES = [
     "MDM_CodigoFabricante",
