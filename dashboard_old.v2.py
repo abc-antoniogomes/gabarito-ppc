@@ -128,41 +128,29 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-def get_worksheet(aba: str):
-    """Abre a worksheet correspondente à aba escolhida. Cria-a se não existir."""
-    import gspread.exceptions
+@st.cache_resource
+def get_worksheet():
     client = get_gspread_client()
     spreadsheet_name = st.secrets["app"]["spreadsheet_name"]
+    worksheet_name = st.secrets["app"]["worksheet_name"]
     spreadsheet = client.open(spreadsheet_name)
-    try:
-        return spreadsheet.worksheet(aba)
-    except gspread.exceptions.WorksheetNotFound:
-        # Cria a aba com os cabeçalhos padrão
-        ws = spreadsheet.add_worksheet(title=aba, rows=1000, cols=20)
-        cabecalhos = [
-            "row_id", "Revisado", "Valido", "Imagem_Valida", "Nome_Codigo_Valido",
-            "Nome_do_Anuncio", "Vendedor", "updated_at", "updated_by",
-        ]
-        ws.update([cabecalhos])
-        return ws
+    worksheet = spreadsheet.worksheet(worksheet_name)
+    return worksheet
 
 
 @st.cache_data(ttl=30, show_spinner="Carregando validações do Google Sheets…")
-def carregar_validacoes_sheet(aba: str) -> pd.DataFrame:
-    ws = get_worksheet(aba)
+def carregar_validacoes_sheet() -> pd.DataFrame:
+    ws = get_worksheet()
     records = ws.get_all_records()
 
-    cols_necessarias = [
-        "row_id", "Revisado", "Valido",
-        "Imagem_Valida", "Nome_Codigo_Valido",
-        "updated_at", "updated_by",
-    ]
-
     if not records:
-        return pd.DataFrame(columns=cols_necessarias)
+        return pd.DataFrame(
+            columns=["row_id", "Revisado", "Valido", "updated_at", "updated_by"]
+        )
 
     dfv = pd.DataFrame(records, dtype=str)
 
+    cols_necessarias = ["row_id", "Revisado", "Valido", "updated_at", "updated_by"]
     for c in cols_necessarias:
         if c not in dfv.columns:
             dfv[c] = ""
@@ -170,75 +158,56 @@ def carregar_validacoes_sheet(aba: str) -> pd.DataFrame:
     dfv["row_id"] = dfv["row_id"].astype(str).str.strip()
     dfv["Revisado"] = dfv["Revisado"].apply(_to_sim_nao)
     dfv["Valido"] = dfv["Valido"].apply(_to_sim_nao)
-    dfv["Imagem_Valida"] = dfv["Imagem_Valida"].apply(_to_sim_nao)
-    # Nome_Codigo_Valido tem 3 opções livres — mantém o valor bruto
-    dfv["Nome_Codigo_Valido"] = dfv["Nome_Codigo_Valido"].astype(str).str.strip()
 
     return dfv
 
 
-def aplicar_validacoes_do_sheet(df_base: pd.DataFrame, aba: str) -> pd.DataFrame:
-    dfv = carregar_validacoes_sheet(aba)
+def aplicar_validacoes_do_sheet(df_base: pd.DataFrame) -> pd.DataFrame:
+    dfv = carregar_validacoes_sheet()
     if dfv.empty:
         return df_base
 
     df = df_base.copy()
     df["row_id"] = df["row_id"].astype(str)
 
-    mapa = dfv.set_index("row_id")[
-        ["Revisado", "Valido", "Imagem_Valida", "Nome_Codigo_Valido"]
-    ].to_dict("index")
-
-    opcoes_ncv = ("Válido", "Inválido", "Não consta")
+    mapa = dfv.set_index("row_id")[["Revisado", "Valido"]].to_dict("index")
 
     for i in df.index:
         rid = str(df.loc[i, "row_id"])
-        if rid not in mapa:
-            continue
-        entrada = mapa[rid]
+        if rid in mapa:
+            revisado = mapa[rid].get("Revisado", "")
+            valido = mapa[rid].get("Valido", "")
 
-        revisado = entrada.get("Revisado", "")
-        valido = entrada.get("Valido", "")
-        img_val = entrada.get("Imagem_Valida", "")
-        ncv = entrada.get("Nome_Codigo_Valido", "")
-
-        if revisado in ("Sim", "Não"):
-            df.loc[i, "Revisado"] = revisado
-        if valido in ("Sim", "Não"):
-            df.loc[i, "Valido"] = valido
-        if img_val in ("Sim", "Não"):
-            df.loc[i, "Imagem_Valida"] = img_val
-        if ncv in opcoes_ncv:
-            df.loc[i, "Nome_Codigo_Valido"] = ncv
+            if revisado in ("Sim", "Não"):
+                df.loc[i, "Revisado"] = revisado
+            if valido in ("Sim", "Não"):
+                df.loc[i, "Valido"] = valido
 
     return df
 
 
-def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame, aba: str) -> int:
+def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame) -> int:
     if not alteracoes:
         return 0
 
-    ws = get_worksheet(aba)
+    ws = get_worksheet()
     records = ws.get_all_records()
-
-    cols_base = [
-        "row_id", "Revisado", "Valido", "Imagem_Valida", "Nome_Codigo_Valido",
-        "Nome_do_Anuncio", "Vendedor", "updated_at", "updated_by",
-    ]
 
     if records:
         df_exist = pd.DataFrame(records, dtype=str)
     else:
-        df_exist = pd.DataFrame(columns=cols_base)
+        df_exist = pd.DataFrame(
+            columns=["row_id", "Revisado", "Valido", "updated_at", "updated_by"]
+        )
 
-    for c in cols_base:
+    for c in ["row_id", "Revisado", "Valido", "updated_at", "updated_by"]:
         if c not in df_exist.columns:
             df_exist[c] = ""
 
     df_exist["row_id"] = df_exist["row_id"].astype(str).str.strip()
 
     agora = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-    usuario = st.secrets["app"].get("usuario", f"aba_{aba}")
+    usuario = st.secrets["app"].get("usuario", "cliente")
 
     mapa_idx = {
         str(row["row_id"]).strip(): idx
@@ -252,8 +221,6 @@ def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame, aba: str
             "row_id": row_id,
             "Revisado": alt.get("Revisado", "Não"),
             "Valido": alt.get("Valido", "Não"),
-            "Imagem_Valida": alt.get("Imagem_Valida", "Não"),
-            "Nome_Codigo_Valido": alt.get("Nome_Codigo_Valido", "Não consta"),
             "Nome_do_Anuncio": str(df_work.loc[idx_int, "Nome_do_Anuncio"]).strip() if "Nome_do_Anuncio" in df_work.columns else "",
             "Vendedor": str(df_work.loc[idx_int, "Vendedor"]).strip() if "Vendedor" in df_work.columns else "",
             "updated_at": agora,
@@ -262,12 +229,17 @@ def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame, aba: str
 
         if row_id in mapa_idx:
             linha = mapa_idx[row_id]
-            for campo in ["Revisado", "Valido", "Imagem_Valida", "Nome_Codigo_Valido", "updated_at", "updated_by"]:
-                df_exist.loc[linha, campo] = payload[campo]
+            df_exist.loc[linha, ["Revisado", "Valido", "updated_at", "updated_by"]] = [
+                payload["Revisado"],
+                payload["Valido"],
+                payload["updated_at"],
+                payload["updated_by"],
+            ]
         else:
             df_exist = pd.concat([df_exist, pd.DataFrame([payload])], ignore_index=True)
 
-    # Garante colunas base no início
+    # Mantém todas as colunas existentes e garante que as colunas base fiquem no início
+    cols_base = ["row_id", "Revisado", "Valido", "Nome_do_Anuncio", "Vendedor", "updated_at", "updated_by"]
     outras_cols = [c for c in df_exist.columns if c not in cols_base]
     df_exist = df_exist[cols_base + outras_cols].fillna("")
 
@@ -276,7 +248,6 @@ def salvar_alteracoes_no_sheet(alteracoes: dict, df_work: pd.DataFrame, aba: str
 
     carregar_validacoes_sheet.clear()
     return len(alteracoes)
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -401,26 +372,6 @@ st.markdown(
     "**Aplicar alterações deste EAN**."
 )
 st.caption("A base do gabarito continua local; o status de validação fica centralizado no Google Sheets.")
-
-# ── Seletor de aba ──────────────────────────────────────────────────────────
-with st.container(border=True):
-    col_aba, col_info = st.columns([1, 3])
-    with col_aba:
-        st.markdown('<div class="section-header">📋 Minha aba no Sheets</div>', unsafe_allow_html=True)
-        aba_selecionada = st.selectbox(
-            "aba",
-            options=[str(i) for i in range(1, 11)],
-            format_func=lambda x: f"Aba {x}",
-            key="aba_usuario",
-            label_visibility="collapsed",
-        )
-    with col_info:
-        st.info(
-            f"💾 Suas validações serão salvas na **Aba {aba_selecionada}** da planilha. "
-            "Cada colaborador deve usar uma aba diferente para evitar conflitos.",
-            icon=None,
-        )
-
 st.divider()
 
 if not os.path.exists(ARQUIVO_GABARITO):
@@ -432,11 +383,10 @@ if not os.path.exists(ARQUIVO_GABARITO):
 
 try:
     df_original = carregar_gabarito(ARQUIVO_GABARITO)
-    df_original = aplicar_validacoes_do_sheet(df_original, aba_selecionada)
+    df_original = aplicar_validacoes_do_sheet(df_original)
 except Exception as e:
     st.error(f"❌ Erro ao carregar dados: {e}")
     st.stop()
-
 
 base_columns = df_original.attrs.get("base_columns", list(df_original.columns))
 if "row_id" not in base_columns:
@@ -696,23 +646,16 @@ with pag_cols[2]:
 # sincroniza os widgets com os valores atuais da página antes de desenhar
 for idx, row in df_ean_page.iterrows():
     idx_int = int(idx)
+    rev_key = f"rev_{idx_int}"
+    val_key = f"val_{idx_int}"
 
     val_df_rev = row.get("Revisado", "Não")
     val_df_val = row.get("Valido", "Não")
-    val_df_img = row.get("Imagem_Valida", "Não")
-    val_df_nmc = row.get("Nome_Codigo_Valido", "Não consta")
-    # garante que o valor nmc seja uma das 3 opções válidas
-    if val_df_nmc not in ("Válido", "Inválido", "Não consta"):
-        val_df_nmc = "Não consta"
 
-    if f"rev_{idx_int}" not in st.session_state:
-        st.session_state[f"rev_{idx_int}"] = val_df_rev
-    if f"val_{idx_int}" not in st.session_state:
-        st.session_state[f"val_{idx_int}"] = val_df_val
-    if f"img_{idx_int}" not in st.session_state:
-        st.session_state[f"img_{idx_int}"] = val_df_img
-    if f"nmc_{idx_int}" not in st.session_state:
-        st.session_state[f"nmc_{idx_int}"] = val_df_nmc
+    if rev_key not in st.session_state:
+        st.session_state[rev_key] = val_df_rev
+    if val_key not in st.session_state:
+        st.session_state[val_key] = val_df_val
 
 estado_antigo = {
     int(i): {
@@ -743,69 +686,53 @@ with st.form(key=f"form_ean_{ean_atual}_pag_{st.session_state['pagina_anuncios']
         mdm_nome_linha = str(row.get("MDM_Nome", "—")).strip() or "—"
 
         with st.container(border=True):
-            # ── Três colunas: Anúncio | Cadastro MYSA | Validação ─────────────
-            col_esq, col_dir, col_val = st.columns([2, 2, 1])
+            c1, c2, c2b, c3, c4, c5 = st.columns([2.6, 1.2, 1.2, 1.0, 1.2, 1.2])
 
-            with col_esq:
-                # ── Anúncio do Google ─────────────────────────────────────────
-                st.markdown('<div class="section-header">🛍️ Anúncio do Google</div>', unsafe_allow_html=True)
+            with c1:
+                st.markdown('<div class="section-header">Anúncio</div>', unsafe_allow_html=True)
                 st.write(f"**{nome_anuncio}**")
-                st.caption(f"EAN: {ean_atual}")
-                st.write(f"Preço: **{preco_fmt}** agora")
+                st.caption(f"Produto MYSA: {mdm_nome_linha}")
+                st.caption(f"Cód. Fab: {fab_code}")
+                st.caption(f"Origem: {origem_label}")
+                st.caption(f"Vendedor: {vendedor or '—'}")
+                st.write(f"Preço: **{preco_fmt}**")
 
-                st.markdown('<div class="section-header">Imagem Anúncio</div>', unsafe_allow_html=True)
+            with c2:
+                st.markdown('<div class="section-header">Imagem (vendedor)</div>', unsafe_allow_html=True)
                 if thumb_row and thumb_row.startswith("http"):
                     st.markdown(
                         f'''
                         <img src="{thumb_row}"
                             loading="lazy"
-                            style="max-width:100%; max-height:150px;
-                                   object-fit:contain; border-radius:8px;
-                                   margin:8px 0;">
+                            style="max-width:100%; border-radius:8px;">
                         ''',
                         unsafe_allow_html=True,
                     )
                 else:
-                    st.caption("Sem imagem do anúncio")
+                    st.caption("—")
 
-                st.caption(f"Origem: {origem_label}")
-                st.caption(f"Vendedor: {vendedor or '—'}")
-
-                if link and link.startswith("http"):
-                    st.link_button("↗ Ver anúncio", link)
-                else:
-                    st.caption("Link indisponível")
-
-            with col_dir:
-                # ── Cadastro MYSA ─────────────────────────────────────────────
-                st.markdown('<div class="section-header">🏢 Cadastro MYSA</div>', unsafe_allow_html=True)
-                st.caption(f"EAN: {ean_atual}")
-                st.write(f"**Produto MYSA:** {mdm_nome_linha}")
-                if fab_code:
-                    st.markdown(
-                        f'<span class="mono-tag">Cód. Fab.: {fab_code}</span>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.caption("Cód. Fab.: —")
-
-                st.markdown('<div class="section-header">Imagem MYSA</div>', unsafe_allow_html=True)
+            with c2b:
+                st.markdown('<div class="section-header">Imagem</div>', unsafe_allow_html=True)
                 if img_mdm and str(img_mdm).startswith("http"):
                     st.markdown(
                         f'''
                         <img src="{img_mdm}"
                             loading="lazy"
-                            style="max-width:100%; max-height:150px;
-                                   object-fit:contain; border-radius:8px;
-                                   margin:8px 0;">
+                            style="max-width:100%; border-radius:8px;">
                         ''',
                         unsafe_allow_html=True,
                     )
                 else:
-                    st.caption("Sem imagem MYSA")
+                    st.caption("—")
 
-            with col_val:
-                # ── Validação ─────────────────────────────────────────────────
+            with c3:
+                st.markdown('<div class="section-header">Link</div>', unsafe_allow_html=True)
+                if link and link.startswith("http"):
+                    st.link_button("↗ Ver anúncio", link)
+                else:
+                    st.caption("Indisponível")
+
+            with c4:
                 st.markdown('<div class="section-header">Revisado</div>', unsafe_allow_html=True)
                 st.radio(
                     f"Revisado_{idx_int}",
@@ -815,25 +742,8 @@ with st.form(key=f"form_ean_{ean_atual}_pag_{st.session_state['pagina_anuncios']
                     label_visibility="collapsed",
                 )
 
-                st.markdown('<div class="section-header">Imagem Válida</div>', unsafe_allow_html=True)
-                st.radio(
-                    f"Imagem_Valida_{idx_int}",
-                    ["Sim", "Não"],
-                    key=f"img_{idx_int}",
-                    horizontal=True,
-                    label_visibility="collapsed",
-                )
-
-                st.markdown('<div class="section-header">Nome/Código Válido</div>', unsafe_allow_html=True)
-                st.radio(
-                    f"Nome_Codigo_Valido_{idx_int}",
-                    ["Válido", "Inválido", "Não consta"],
-                    key=f"nmc_{idx_int}",
-                    horizontal=False,
-                    label_visibility="collapsed",
-                )
-
-                st.markdown('<div class="section-header">Válido (geral)</div>', unsafe_allow_html=True)
+            with c5:
+                st.markdown('<div class="section-header">Válido</div>', unsafe_allow_html=True)
                 st.radio(
                     f"Valido_{idx_int}",
                     ["Sim", "Não"],
@@ -852,8 +762,6 @@ if aplicar:
         idx_int = int(idx)
         novo_rev = st.session_state.get(f"rev_{idx_int}", "Não")
         novo_val = st.session_state.get(f"val_{idx_int}", "Não")
-        novo_img = st.session_state.get(f"img_{idx_int}", "Não")
-        novo_nmc = st.session_state.get(f"nmc_{idx_int}", "Não consta")
 
         if novo_val == "Sim":
             novo_rev = "Sim"
@@ -865,8 +773,6 @@ if aplicar:
         updates[idx_int] = {
             "Revisado": novo_rev,
             "Valido": novo_val,
-            "Imagem_Valida": novo_img,
-            "Nome_Codigo_Valido": novo_nmc,
         }
 
     for idx_int in validou_agora:
@@ -899,8 +805,8 @@ if aplicar:
             st.session_state["df_work"].loc[idx_int, "Valido"] = alt["Valido"]
 
     try:
-        qtd = salvar_alteracoes_no_sheet(updates, st.session_state["df_work"], aba_selecionada)
-        st.success(f"✅ {qtd} alteração(ões) salva(s) no Google Sheets (Aba {aba_selecionada}).")
+        qtd = salvar_alteracoes_no_sheet(updates, st.session_state["df_work"])
+        st.success(f"✅ {qtd} alteração(ões) salva(s) no Google Sheets.")
     except Exception as e:
         st.error(f"❌ Erro ao salvar no Google Sheets: {e}")
 
@@ -908,8 +814,6 @@ if aplicar:
         idx_int = int(idx)
         st.session_state.pop(f"rev_{idx_int}", None)
         st.session_state.pop(f"val_{idx_int}", None)
-        st.session_state.pop(f"img_{idx_int}", None)
-        st.session_state.pop(f"nmc_{idx_int}", None)
 
     st.rerun()
 
